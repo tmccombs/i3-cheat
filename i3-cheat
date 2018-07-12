@@ -1,0 +1,152 @@
+#!/bin/env python3
+
+from io import StringIO
+import json
+import os
+import re
+import socket
+import struct
+from collections import namedtuple
+
+def get_sock_path():
+    '''Get the socket path for i3 (or sway)'''
+    path = os.environ.get('I3SOCK')
+    if not path:
+        path = os.environ.get('SWAYSOCK')
+    if not path:
+        import subprocess
+        path = subprocess.check_output(['i3', '--get-socketpath']).strip().decode()
+    return path
+
+
+GET_CONFIG = 9
+MAGIC = b'i3-ipc'
+MAGIC_LEN = len(MAGIC)
+def get_config():
+    '''Get the configuration for the running i3 (or sway)'''
+    socket_path = get_sock_path()
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(socket_path)
+    sock.send(MAGIC + struct.pack('II', 0, GET_CONFIG))
+    header = sock.recv(MAGIC_LEN + 8)
+    assert header[0:MAGIC_LEN] == MAGIC, "Unexpected magic number"
+    (size, typ) = struct.unpack('II', header[MAGIC_LEN:])
+    assert typ == GET_CONFIG, "Unexpected response type"
+    config = sock.recv(size)
+    sock.close()
+
+    return json.loads(config)['config']
+
+class Mode:
+    '''A key binding mode'''
+    def __init__(self, name, pango):
+        self.name = name
+        self.pango = bool(pango)
+        self._bindings = []
+
+    def add_binding(self, binding):
+        '''Add a binding to the mode'''
+        self._bindings.append(binding)
+
+    def bindings(self):
+        '''Get an iterator over the bindings'''
+        return iter(self._bindings)
+
+Binding = namedtuple('Binding', ['key', 'command', 'kind', 'release_key'])
+
+def config_lines(content):
+    buf = None
+    for line in content.splitlines():
+        if buf is None:
+            if line.startswith('#'):
+                continue
+            elif line.endswith('\\'):
+                buf = line[:-1]
+            else:
+                yield line
+        else:
+            if line.endswith('\\'):
+                buf += line[:-1]
+            else:
+                yield buf + line
+                buf = None
+
+def parse_config(config):
+    '''Parse the configuration to get the bindings.'''
+    default_mode = Mode('default', False)
+    modes = [default_mode]
+    mode = default_mode
+
+    bind_re = re.compile(r'\s*bind(sym|code) +(--release +)?(\S+) +(.+)')
+    mode_re = re.compile(r'\s*mode +(--pango_markup +)?(.+?) +?\{$')
+    mode_end_re = re.compile(r'\s*\}')
+
+    for line in config_lines(config):
+        match = bind_re.match(line)
+        if match:
+            mode.add_binding(Binding(match[3], match[4], match[1], bool(match[2])))
+            continue
+        match = mode_re.match(line)
+        if match:
+            mode = Mode(match[2].strip('"'), bool(match[1]))
+            modes.append(mode)
+        elif mode != default_mode and mode_end_re.match(line):
+            mode = default_mode
+
+    return modes
+
+def get_bindings():
+    '''Get the bindings from the active config'''
+    return parse_config(get_config())
+
+
+def print_bindings(modes):
+    '''Print an output of the bindings in i3'''
+    for mode in modes:
+        print("{}:".format(mode.name))
+
+        width = max(len(b.key) for b in mode.bindings())
+
+        for binding in mode.bindings():
+            print("\t{:<{width}}\t{}".format(binding.key, binding.command, width=width))
+
+def gui(modes):
+    '''Show a gui of the active binding modes'''
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk
+
+    layout = Gtk.FlowBox(max_children_per_line=2, selection_mode=Gtk.SelectionMode.NONE)
+
+    for mode in modes:
+        #TODO: support pango name
+        frame = Gtk.Frame(label=mode.name)
+        layout.add(frame)
+        grid = Gtk.Grid(column_spacing=20, border_width=10)
+        frame.add(grid)
+        for (row, binding) in enumerate(mode.bindings()):
+            #TODO: indication for code bindings
+            key_label = Gtk.Label(label=binding.key, halign=Gtk.Align.START)
+            grid.attach(key_label, 0, row, 1, 1)
+            cmd_label = Gtk.Label(label=binding.command, halign=Gtk.Align.START)
+            grid.attach(cmd_label, 1, row, 1, 1)
+
+    scrolled = Gtk.ScrolledWindow()
+    scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    scrolled.add(layout)
+
+    win = Gtk.Window()
+    win.add(scrolled)
+    win.connect('destroy', Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
+
+def main():
+    '''main method'''
+    modes = get_bindings()
+    # print_bindings(bindings)
+    gui(modes)
+
+
+if __name__ == '__main__':
+    main()
