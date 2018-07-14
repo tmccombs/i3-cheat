@@ -6,7 +6,7 @@ i3 and aren't used to the key bindings yet.
 
 ## Prerequisites
 
-- Python 3
+- Python 3.5 or higher
 - Gtk+ 3.0 or higher
 - i3 or sway
 

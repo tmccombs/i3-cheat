@@ -1,4 +1,4 @@
-#!/bin/env python3
+#!/usr/bin/env python3
 
 from io import StringIO
 import json
@@ -26,9 +26,16 @@ def get_config():
     '''Get the configuration for the running i3 (or sway)'''
     socket_path = get_sock_path()
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(0.25)
     sock.connect(socket_path)
     sock.send(MAGIC + struct.pack('II', 0, GET_CONFIG))
-    header = sock.recv(MAGIC_LEN + 8)
+    try:
+        header = sock.recv(MAGIC_LEN + 8)
+    except socket.timeout as e:
+        from pathlib import Path
+        # older versions of i3 don't have a GET_CONFIG ipc function
+        # fall back to reading directly from config
+        return Path('~/.config/i3/config').expanduser().read_text()
     assert header[0:MAGIC_LEN] == MAGIC, "Unexpected magic number"
     (size, typ) = struct.unpack('II', header[MAGIC_LEN:])
     assert typ == GET_CONFIG, "Unexpected response type"
@@ -84,11 +91,11 @@ def parse_config(config):
     for line in config_lines(config):
         match = bind_re.match(line)
         if match:
-            mode.add_binding(Binding(match[3], match[4], match[1], bool(match[2])))
+            mode.add_binding(Binding(match.group(3), match.group(4), match.group(1), bool(match.group(2))))
             continue
         match = mode_re.match(line)
         if match:
-            mode = Mode(match[2].strip('"'), bool(match[1]))
+            mode = Mode(match.group(2).strip('"'), bool(match.group(1)))
             modes.append(mode)
         elif mode != default_mode and mode_end_re.match(line):
             mode = default_mode
