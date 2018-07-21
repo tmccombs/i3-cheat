@@ -124,8 +124,12 @@ def gui(modes):
     from gi.repository import Gtk
 
     def mode_label(mode):
-        #TODO: support pango name
-        return Gtk.Label(mode.name)
+        label = Gtk.Label()
+        if mode.pango:
+            label.set_markup(mode.name)
+        else:
+            label.set_text(mode.name)
+        return label
 
     notebook = Gtk.Notebook(scrollable=True)
 
@@ -136,7 +140,7 @@ def gui(modes):
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.add(grid)
 
-        notebook.append_page(scrolled, Gtk.Label(mode.name))
+        notebook.append_page(scrolled, mode_label(mode))
         for (row, binding) in enumerate(mode.bindings()):
             #TODO: indication for code bindings
             key_label = Gtk.Label(label=binding.key, halign=Gtk.Align.START)
