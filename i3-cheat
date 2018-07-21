@@ -142,8 +142,10 @@ def gui(modes):
 
         notebook.append_page(scrolled, mode_label(mode))
         for (row, binding) in enumerate(mode.bindings()):
-            #TODO: indication for code bindings
-            key_label = Gtk.Label(label=binding.key, halign=Gtk.Align.START)
+            key = binding.key
+            if binding.kind == 'code':
+                key = 'Code: ' + key
+            key_label = Gtk.Label(label=key, halign=Gtk.Align.START)
             grid.attach(key_label, 0, row, 1, 1)
             cmd_label = Gtk.Label(label=binding.command, halign=Gtk.Align.START)
             grid.attach(cmd_label, 1, row, 1, 1)
