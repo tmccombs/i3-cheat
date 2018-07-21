@@ -123,14 +123,20 @@ def gui(modes):
     gi.require_version('Gtk', '3.0')
     from gi.repository import Gtk
 
-    layout = Gtk.FlowBox(max_children_per_line=2, selection_mode=Gtk.SelectionMode.NONE)
+    def mode_label(mode):
+        #TODO: support pango name
+        return Gtk.Label(mode.name)
+
+    notebook = Gtk.Notebook(scrollable=True)
 
     for mode in modes:
-        #TODO: support pango name
-        frame = Gtk.Frame(label=mode.name)
-        layout.add(frame)
         grid = Gtk.Grid(column_spacing=20, border_width=10)
-        frame.add(grid)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.add(grid)
+
+        notebook.append_page(scrolled, Gtk.Label(mode.name))
         for (row, binding) in enumerate(mode.bindings()):
             #TODO: indication for code bindings
             key_label = Gtk.Label(label=binding.key, halign=Gtk.Align.START)
@@ -138,12 +144,8 @@ def gui(modes):
             cmd_label = Gtk.Label(label=binding.command, halign=Gtk.Align.START)
             grid.attach(cmd_label, 1, row, 1, 1)
 
-    scrolled = Gtk.ScrolledWindow()
-    scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-    scrolled.add(layout)
-
     win = Gtk.Window()
-    win.add(scrolled)
+    win.add(notebook)
     win.connect('destroy', Gtk.main_quit)
     win.show_all()
     Gtk.main()
