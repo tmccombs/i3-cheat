@@ -125,6 +125,17 @@ def gui(modes):
     from gi.repository import Gtk
     from gi.repository import Gdk
 
+    CSS=b"""
+    * {
+        font-size: 16px;
+    }
+    """
+    style = Gtk.CssProvider()
+    style.load_from_data(CSS)
+    Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(),
+            style,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
     def mode_label(mode):
         label = Gtk.Label()
         if mode.pango:
@@ -157,21 +168,25 @@ def gui(modes):
     notebook.connect('key-press-event', on_key_press)
 
     for mode in modes:
-        grid = Gtk.Grid(column_spacing=20, border_width=10)
-
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.add(grid)
-
-        notebook.append_page(scrolled, mode_label(mode))
-        for (row, binding) in enumerate(mode.bindings()):
+        store = Gtk.ListStore(str, str)
+        for binding in mode.bindings():
             key = binding.key
             if binding.kind == 'code':
                 key = 'Code: ' + key
-            key_label = Gtk.Label(label=key, halign=Gtk.Align.START)
-            grid.attach(key_label, 0, row, 1, 1)
-            cmd_label = Gtk.Label(label=binding.command, halign=Gtk.Align.START)
-            grid.attach(cmd_label, 1, row, 1, 1)
+            store.append([key, binding.command])
+
+        tree = Gtk.TreeView(store)
+        key_column = Gtk.TreeViewColumn("Binding", Gtk.CellRendererText(), text=0)
+        tree.append_column(key_column)
+        command_column = Gtk.TreeViewColumn("Command", Gtk.CellRendererText(), text=1)
+        tree.append_column(command_column)
+        tree.get_selection().set_mode(Gtk.SelectionMode.NONE)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.add(tree)
+
+        notebook.append_page(scrolled, mode_label(mode))
 
     win = Gtk.Window()
     win.add(notebook)
