@@ -8,6 +8,14 @@ import socket
 import struct
 from collections import namedtuple
 
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk
+from gi.repository import Gdk
+from gi.repository import GLib
+from gi.repository import GObject
+
 def get_sock_path():
     '''Get the socket path for i3 (or sway)'''
     path = os.environ.get('I3SOCK')
@@ -117,34 +125,62 @@ def print_bindings(modes):
         for binding in mode.bindings():
             print("\t{:<{width}}\t{}".format(binding.key, binding.command, width=width))
 
-def gui(modes):
-    '''Show a gui of the active binding modes'''
-    import gi
-    gi.require_version('Gtk', '3.0')
-    gi.require_version('Gdk', '3.0')
-    from gi.repository import Gtk
-    from gi.repository import Gdk
 
-    CSS=b"""
-    * {
-        font-size: 16px;
-    }
-    """
-    style = Gtk.CssProvider()
-    style.load_from_data(CSS)
-    Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(),
-            style,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+def mode_label(mode):
+    'Create a GTK label for mode'''
+    label = Gtk.Label()
+    if mode.pango:
+        label.set_markup(mode.name)
+    else:
+        label.set_text(mode.name)
+    return label
 
-    def mode_label(mode):
-        label = Gtk.Label()
-        if mode.pango:
-            label.set_markup(mode.name)
-        else:
-            label.set_text(mode.name)
-        return label
+class I3CheatWindow(Gtk.ApplicationWindow):
+    def __init__(self, modes, **kwargs):
+        '''Create an I3Cheat instance'''
+        super().__init__(**kwargs)
 
-    def on_key_press(widget, ev, data=None):
+        self.notebook = Gtk.Notebook(scrollable=True)
+        self.notebook.connect('key-press-event', self.on_key_press)
+        for mode in modes:
+            self._init_mode(mode)
+
+        self.add(self.notebook)
+
+        style = Gtk.CssProvider()
+        style.load_from_data(I3Cheat.CSS)
+        Gtk.StyleContext.add_provider_for_screen(
+                Gdk.Screen.get_default(),
+                style,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+    def test(self, *args):
+        print(args)
+
+    def _init_mode(self, mode):
+        store = Gtk.ListStore(str, str)
+        for binding in mode.bindings():
+            key = binding.key
+            if binding.kind == 'code':
+                key = 'Code: ' + key
+            store.append([key, binding.command])
+
+        tree = Gtk.TreeView(store, headers_visible=False, enable_search=False)
+        tree.get_selection().set_mode(Gtk.SelectionMode.NONE)
+        key_column = Gtk.TreeViewColumn("Binding", Gtk.CellRendererText(), text=0)
+        key_column.set_spacing(140)
+        tree.append_column(key_column)
+        command_column = Gtk.TreeViewColumn("Command", Gtk.CellRendererText(), text=1)
+        command_column.set_spacing(140)
+        tree.append_column(command_column)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.add(tree)
+
+        self.notebook.append_page(scrolled, mode_label(mode))
+
+    def on_key_press(self, widget, ev, data=None):
         if ev.keyval == Gdk.KEY_h:
             widget.prev_page()
             return True
@@ -164,42 +200,32 @@ def gui(modes):
             return True
         return False
 
-    notebook = Gtk.Notebook(scrollable=True)
-    notebook.connect('key-press-event', on_key_press)
+class I3Cheat(Gtk.Application):
+    CSS = b"""
+        * {
+            font-size: 16px;
+            -GtkTreeView-horizontal-separator: 20;
+        }
+    """
 
-    for mode in modes:
-        store = Gtk.ListStore(str, str)
-        for binding in mode.bindings():
-            key = binding.key
-            if binding.kind == 'code':
-                key = 'Code: ' + key
-            store.append([key, binding.command])
+    def __init__(self):
+        super().__init__(application_id="com.github.tmccombs.i3-cheat")
+        self.window = None
 
-        tree = Gtk.TreeView(store)
-        key_column = Gtk.TreeViewColumn("Binding", Gtk.CellRendererText(), text=0)
-        tree.append_column(key_column)
-        command_column = Gtk.TreeViewColumn("Command", Gtk.CellRendererText(), text=1)
-        tree.append_column(command_column)
-        tree.get_selection().set_mode(Gtk.SelectionMode.NONE)
+    def do_activate(self):
+        if not self.window:
+            win = I3CheatWindow(self.modes, application=self, title="I3 Cheatsheet")
+            win.show_all()
+        win.present()
 
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.add(tree)
-
-        notebook.append_page(scrolled, mode_label(mode))
-
-    win = Gtk.Window()
-    win.add(notebook)
-    win.connect('destroy', Gtk.main_quit)
-    win.show_all()
-    Gtk.main()
-
-def main():
-    '''main method'''
-    modes = get_bindings()
-    # print_bindings(bindings)
-    gui(modes)
-
+    def do_startup(self):
+        Gtk.Application.do_startup(self)
+        self.modes = get_bindings()
 
 if __name__ == '__main__':
-    main()
+    import sys
+    import signal
+    app = I3Cheat()
+    # so ctrl+c still works
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, app.quit)
+    app.run(sys.argv)
