@@ -146,6 +146,7 @@ class I3CheatWindow(Gtk.ApplicationWindow):
             self._init_mode(mode)
 
         self.add(self.notebook)
+        self.current_page().grab_focus()
 
         style = Gtk.CssProvider()
         style.load_from_data(I3Cheat.CSS)
@@ -153,6 +154,10 @@ class I3CheatWindow(Gtk.ApplicationWindow):
                 Gdk.Screen.get_default(),
                 style,
                 Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+
+    def current_page(self):
+        return self.notebook.get_nth_page(self.notebook.get_current_page())
 
     def test(self, *args):
         print(args)
@@ -165,8 +170,9 @@ class I3CheatWindow(Gtk.ApplicationWindow):
                 key = 'Code: ' + key
             store.append([key, binding.command])
 
-        tree = Gtk.TreeView(store, headers_visible=False, enable_search=False)
-        tree.get_selection().set_mode(Gtk.SelectionMode.NONE)
+        tree = Gtk.TreeView(store, headers_visible=False, enable_search=False, search_column=1)
+        tree.get_selection().set_mode(Gtk.SelectionMode.BROWSE)
+        tree.set_cursor(Gtk.TreePath(0), None, False)
         key_column = Gtk.TreeViewColumn("Binding", Gtk.CellRendererText(), text=0)
         key_column.set_spacing(140)
         tree.append_column(key_column)
@@ -190,21 +196,20 @@ class I3CheatWindow(Gtk.ApplicationWindow):
         elif ev.keyval == Gdk.KEY_q or ev.keyval == Gdk.KEY_Escape:
             Gtk.main_quit()
             return True
-
-        vadj = widget.get_nth_page(widget.get_current_page()).get_vadjustment()
-        if ev.keyval == Gdk.KEY_j:
-            vadj.props.value += vadj.get_step_increment()
-            return True
-        elif ev.keyval == Gdk.KEY_k:
-            vadj.props.value -= vadj.get_step_increment()
-            return True
         return False
 
 class I3Cheat(Gtk.Application):
     CSS = b"""
         * {
             font-size: 16px;
-            -GtkTreeView-horizontal-separator: 20;
+        }
+        @binding-set test {
+            bind "slash" { "start-interactive-search" () };
+            bind "j" { "move-cursor" (display-lines, 1) };
+            bind "k" { "move-cursor" (display-lines, -1) };
+        }
+        GtkTreeView {
+            gtk-key-bindings: test;
         }
     """
 
