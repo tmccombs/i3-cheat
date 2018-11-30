@@ -92,13 +92,26 @@ def parse_config(config):
 
     bind_re = re.compile(r'\s*bind(sym|code) +(--release +)?(\S+) +(.+)')
     mode_re = re.compile(r'\s*mode +(--pango_markup +)?(.+?) +?\{$')
+    set_re = re.compile(r'\s*set (\$\S+)\s+(.+)')
     mode_end_re = re.compile(r'\s*\}')
+    variables = dict()
+
+    def do_replacements(line):
+      print("Doing replacements with ", variables)
+      for name, value in variables.items():
+        line = line.replace(name, value)
+      return line
 
     for line in config_lines(config):
+        line = do_replacements(line)
         match = bind_re.match(line)
         if match:
             mode.add_binding(Binding(match.group(3), match.group(4), match.group(1), bool(match.group(2))))
             continue
+        match = set_re.match(line)
+        if match:
+          variables[match.group(1)] = match.group(2)
+          continue
         match = mode_re.match(line)
         if match:
             mode = Mode(match.group(2).strip('"'), bool(match.group(1)))
