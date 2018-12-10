@@ -10,9 +10,7 @@ from collections import namedtuple
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
-from gi.repository import Gtk
-from gi.repository import Gdk
-from gi.repository import GLib
+from gi.repository import Gdk, Gio, GLib, Gtk
 
 def get_sock_path():
     '''Get the socket path for i3 (or sway)'''
@@ -97,7 +95,6 @@ def parse_config(config):
     variables = dict()
 
     def do_replacements(line):
-      print("Doing replacements with ", variables)
       for name, value in variables.items():
         line = line.replace(name, value)
       return line
@@ -151,6 +148,7 @@ class I3CheatWindow(Gtk.ApplicationWindow):
         '''Create an I3Cheat instance'''
         super().__init__(**kwargs)
 
+        self._tab_lookup = dict()
         self.set_default_size(-1, 740)
 
         accel_group = Gtk.AccelGroup()
@@ -192,7 +190,7 @@ class I3CheatWindow(Gtk.ApplicationWindow):
                 key = 'Code: ' + key
             store.append([key, binding.command])
 
-        tree = Gtk.TreeView(store, headers_visible=False, enable_search=False, search_column=1)
+        tree = Gtk.TreeView(model=store, headers_visible=False, enable_search=False, search_column=1)
         tree.get_selection().set_mode(Gtk.SelectionMode.BROWSE)
         tree.set_cursor(Gtk.TreePath(0), None, False)
         key_column = Gtk.TreeViewColumn("Binding", Gtk.CellRendererText(), text=0)
@@ -206,9 +204,17 @@ class I3CheatWindow(Gtk.ApplicationWindow):
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.add(tree)
 
+        self._tab_lookup[mode.name] = self.notebook.get_n_pages()
         self.notebook.append_page(scrolled, mode_label(mode))
 
+
+    def focus_mode(self, mode):
+        'Focus on a mode by its name'
+        idx = self._tab_lookup.get(mode, 0)
+        self.notebook.set_current_page(idx)
+
     def next_mode(self, *args):
+        'move focus to the next mode'
         self.notebook.next_page()
     def prev_mode(self, *args):
         self.notebook.prev_page()
@@ -231,13 +237,19 @@ class I3Cheat(Gtk.Application):
     """
 
     def __init__(self):
-        super().__init__(application_id="com.github.tmccombs.i3-cheat")
+        super().__init__(application_id="com.github.tmccombs.i3-cheat", flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
+        self.add_main_option('mode', ord('m'), 0, GLib.OptionArg.STRING, "Mode tab to open", "MODE")
         self.window = None
 
-    def do_activate(self):
+    def do_command_line(self, cl):
         if not self.window:
             win = I3CheatWindow(self.modes, application=self, title="I3 Cheatsheet")
             win.show_all()
+
+        mode = cl.get_options_dict().lookup_value('mode')
+        if mode:
+            mode = mode.get_string()
+            win.focus_mode(mode)
         win.present()
 
     def do_startup(self):
