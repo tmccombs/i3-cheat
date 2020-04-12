@@ -6,11 +6,17 @@ import re
 import socket
 import struct
 from collections import namedtuple
+from pathlib import Path
+import subprocess
 
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
 from gi.repository import Gdk, Gio, GLib, Gtk
+
+
+Binding = namedtuple('Binding', ['key', 'command', 'kind', 'release_key'])
+
 
 def get_sock_path():
     '''Get the socket path for i3 (or sway)'''
@@ -18,7 +24,6 @@ def get_sock_path():
     if not path:
         path = os.environ.get('SWAYSOCK')
     if not path:
-        import subprocess
         path = subprocess.check_output(['i3', '--get-socketpath']).strip().decode()
     return path
 
@@ -26,8 +31,14 @@ def get_sock_path():
 GET_CONFIG = 9
 MAGIC = b'i3-ipc'
 MAGIC_LEN = len(MAGIC)
+
+
 def get_config():
     '''Get the configuration for the running i3 (or sway)'''
+    custom_path = os.environ.get('I3_CONFIG_PATH')
+    if custom_path:
+        with open(custom_path) as f:
+            return f.read()
     socket_path = get_sock_path()
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(0.25)
@@ -36,7 +47,6 @@ def get_config():
     try:
         header = sock.recv(MAGIC_LEN + 8)
     except socket.timeout:
-        from pathlib import Path
         # older versions of i3 don't have a GET_CONFIG ipc function
         # fall back to reading directly from config
         return Path('~/.config/i3/config').expanduser().read_text()
@@ -47,6 +57,7 @@ def get_config():
     sock.close()
 
     return json.loads(config)['config']
+
 
 class Mode:
     '''A key binding mode'''
@@ -63,15 +74,15 @@ class Mode:
         '''Get an iterator over the bindings'''
         return iter(self._bindings)
 
-Binding = namedtuple('Binding', ['key', 'command', 'kind', 'release_key'])
 
 def config_lines(content):
+    '''Read the lines of the config file'''
     buf = None
     for line in content.splitlines():
         if buf is None:
             if line.startswith('#'):
                 continue
-            elif line.endswith('\\'):
+            if line.endswith('\\'):
                 buf = line[:-1]
             else:
                 yield line
@@ -81,6 +92,7 @@ def config_lines(content):
             else:
                 yield buf + line
                 buf = None
+
 
 def parse_config(config):
     '''Parse the configuration to get the bindings.'''
@@ -92,31 +104,46 @@ def parse_config(config):
     mode_re = re.compile(r'\s*mode +(--pango_markup +)?(.+?) +?\{$')
     set_re = re.compile(r'\s*set (\$\S+)\s+(.+)')
     mode_end_re = re.compile(r'\s*\}')
-    variables = dict()
+    variables = []
 
     def do_replacements(line):
-      for name, value in variables.items():
-        line = line.replace(name, value)
-      return line
+        for key, value in variables:
+            line = line.replace(key, value)
+        return line
+
+    def upsert_variable(key, value):
+        new_var = (key, value)
+        for i, (k, _) in enumerate(variables):
+            if len(key) > len(k):
+                # insert before shorter keys, in case there is a prefix of this key
+                variables.insert(i, new_var)
+                return
+            if key == k:
+                # replace
+                variables[i] = new_var
+                return
+        variables.append(new_var)
 
     for line in config_lines(config):
+        # match set first, because variable substitution isn't don on set lines
+        match = set_re.match(line)
+        if match:
+            upsert_variable(match.group(1), match.group(2))
+            continue
+
         line = do_replacements(line)
         match = bind_re.match(line)
         if match:
             mode.add_binding(Binding(match.group(3), match.group(4), match.group(1), bool(match.group(2))))
             continue
-        match = set_re.match(line)
-        if match:
-          variables[match.group(1)] = match.group(2)
-          continue
         match = mode_re.match(line)
         if match:
             mode = Mode(match.group(2).strip('"'), bool(match.group(1)))
             modes.append(mode)
         elif mode != default_mode and mode_end_re.match(line):
             mode = default_mode
-
     return modes
+
 
 def get_bindings():
     '''Get the bindings from the active config'''
@@ -143,6 +170,7 @@ def mode_label(mode):
         label.set_text(mode.name)
     return label
 
+
 class I3CheatWindow(Gtk.ApplicationWindow):
     def __init__(self, modes, **kwargs):
         '''Create an I3Cheat instance'''
@@ -164,7 +192,6 @@ class I3CheatWindow(Gtk.ApplicationWindow):
         for mode in modes:
             self._init_mode(mode)
 
-
         self.add(self.notebook)
         self.current_page().grab_focus()
 
@@ -174,7 +201,6 @@ class I3CheatWindow(Gtk.ApplicationWindow):
             Gdk.Screen.get_default(),
             style,
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-
 
     def current_page(self):
         return self.notebook.get_nth_page(self.notebook.get_current_page())
@@ -207,7 +233,6 @@ class I3CheatWindow(Gtk.ApplicationWindow):
         self._tab_lookup[mode.name] = self.notebook.get_n_pages()
         self.notebook.append_page(scrolled, mode_label(mode))
 
-
     def focus_mode(self, mode):
         'Focus on a mode by its name'
         idx = self._tab_lookup.get(mode, 0)
@@ -216,10 +241,13 @@ class I3CheatWindow(Gtk.ApplicationWindow):
     def next_mode(self, *args):
         'move focus to the next mode'
         self.notebook.next_page()
+
     def prev_mode(self, *args):
         self.notebook.prev_page()
+
     def _quit(self, *args):
         self.close()
+
 
 class I3Cheat(Gtk.Application):
     CSS = b"""
@@ -255,6 +283,7 @@ class I3Cheat(Gtk.Application):
     def do_startup(self):
         Gtk.Application.do_startup(self)
         self.modes = get_bindings()
+
 
 if __name__ == '__main__':
     import sys
