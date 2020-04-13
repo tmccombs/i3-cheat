@@ -205,9 +205,6 @@ class I3CheatWindow(Gtk.ApplicationWindow):
     def current_page(self):
         return self.notebook.get_nth_page(self.notebook.get_current_page())
 
-    def test(self, *args):
-        print(args)
-
     def _init_mode(self, mode):
         store = Gtk.ListStore(str, str)
         for binding in mode.bindings():
@@ -254,31 +251,32 @@ class I3Cheat(Gtk.Application):
         * {
             font-size: 16px;
         }
-        @binding-set test {
+        @binding-set i3-binds {
             bind "slash" { "start-interactive-search" () };
             bind "j" { "move-cursor" (display-lines, 1) };
             bind "k" { "move-cursor" (display-lines, -1) };
         }
         GtkTreeView, treeview {
-            gtk-key-bindings: test;
+            -gtk-key-bindings: i3-binds;
         }
     """
 
     def __init__(self):
         super().__init__(application_id="com.github.tmccombs.i3-cheat", flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
         self.add_main_option('mode', ord('m'), 0, GLib.OptionArg.STRING, "Mode tab to open", "MODE")
-        self.window = None
+        self._window = None
 
     def do_command_line(self, cl):
-        if not self.window:
-            win = I3CheatWindow(self.modes, application=self, title="I3 Cheatsheet")
-            win.show_all()
+        if not self._window:
+            self._window = I3CheatWindow(self.modes, application=self, title="I3 Cheatsheet")
+            self._window.show_all()
 
         mode = cl.get_options_dict().lookup_value('mode')
         if mode:
             mode = mode.get_string()
-            win.focus_mode(mode)
-        win.present()
+            self._window.focus_mode(mode)
+        self._window.present()
+        return 0
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
