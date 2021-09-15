@@ -24,7 +24,8 @@ def get_sock_path():
     if not path:
         path = os.environ.get('SWAYSOCK')
     if not path:
-        path = subprocess.check_output(['i3', '--get-socketpath']).strip().decode()
+        path = subprocess.check_output(
+                ['i3', '--get-socketpath']).strip().decode()
     return path
 
 
@@ -59,15 +60,18 @@ def get_config():
     return json.loads(config)['config']
 
 
-class Mode:
-    '''A key binding mode'''
-    def __init__(self, name, pango):
+class Category:
+    def __init__(self, name, suffix=None, pango=False):
         self.name = name
-        self.pango = bool(pango)
         self._bindings = []
+        self.pango = bool(pango)
+        if suffix:
+            self.label = ' '.join([name, suffix])
+        else:
+            self.label = name
 
     def add_binding(self, binding):
-        '''Add a binding to the mode'''
+        '''Add a binding to the category'''
         self._bindings.append(binding)
 
     def bindings(self):
@@ -78,8 +82,23 @@ class Mode:
 def config_lines(content):
     '''Read the lines of the config file'''
     buf = None
+    in_annotation = False
     for line in content.splitlines():
+        line = line.strip()
+        if in_annotation:
+            m = line.startswith('#*')
+            if m:
+                buf += line[2:]
+                continue
+            else:
+                yield buf
+                buf = None
+                in_annotation = False
         if buf is None:
+            if line.startswith('#*'):
+                in_annotation = True
+                buf = line
+                continue
             if line.startswith('#'):
                 continue
             if line.endswith('\\'):
@@ -96,14 +115,16 @@ def config_lines(content):
 
 def parse_config(config):
     '''Parse the configuration to get the bindings.'''
-    default_mode = Mode('default', False)
-    modes = [default_mode]
-    mode = default_mode
+    default_category = Category('default', 'mode')
+    categories = [default_category]
+    category = default_category
+    user_categories = {}
 
     bind_re = re.compile(r'\s*bind(sym|code) +(--release +)?(\S+) +(.+)')
     mode_re = re.compile(r'\s*mode +(--pango_markup +)?(.+?) +?\{$')
     set_re = re.compile(r'\s*set (\$\S+)\s+(.+)')
     mode_end_re = re.compile(r'\s*\}')
+    annotation_re = re.compile(r'^#\*\s*(?:(.+):\s*)?(.*)')
     variables = []
 
     def do_replacements(line):
@@ -115,7 +136,8 @@ def parse_config(config):
         new_var = (key, value)
         for i, (k, _) in enumerate(variables):
             if len(key) > len(k):
-                # insert before shorter keys, in case there is a prefix of this key
+                # insert before shorter keys,
+                # in case there is a prefix of this key
                 variables.insert(i, new_var)
                 return
             if key == k:
@@ -124,8 +146,32 @@ def parse_config(config):
                 return
         variables.append(new_var)
 
+    def get_user_category(category):
+        cat = user_categories.get(category)
+        if not cat:
+            cat = Category(category)
+            user_categories[category] = cat
+            categories.append(cat)
+        return cat
+
+    annotation = None
+    has_annotation = False
+    in_mode = False
+
     for line in config_lines(config):
-        # match set first, because variable substitution isn't don on set lines
+        # unset description if it wasn't the last line
+        if has_annotation:
+            has_annotation = False
+        else:
+            annotation = None
+
+        match = annotation_re.match(line)
+        if match:
+            annotation = match.groups()
+            has_annotation = True
+            continue
+        # match set first, because variable substitution
+        # isn't done on set lines
         match = set_re.match(line)
         if match:
             upsert_variable(match.group(1), match.group(2))
@@ -134,15 +180,27 @@ def parse_config(config):
         line = do_replacements(line)
         match = bind_re.match(line)
         if match:
-            mode.add_binding(Binding(match.group(3), match.group(4), match.group(1), bool(match.group(2))))
+            description = annotation and annotation[1]
+            binding = Binding(
+                    match.group(3),
+                    description or match.group(4),
+                    match.group(1),
+                    bool(match.group(2)))
+            category.add_binding(binding)
+            if annotation and annotation[0]:
+                c = get_user_category(annotation[0])
+                c.add_binding(binding)
             continue
         match = mode_re.match(line)
         if match:
-            mode = Mode(match.group(2).strip('"'), bool(match.group(1)))
-            modes.append(mode)
-        elif mode != default_mode and mode_end_re.match(line):
-            mode = default_mode
-    return modes
+            category = Category(
+                    match.group(2).strip('"'),
+                    'mode',
+                    match.group(1))
+            categories.append(category)
+        elif in_mode and mode_end_re.match(line):
+            category = default_category
+    return categories
 
 
 def get_bindings():
@@ -150,29 +208,29 @@ def get_bindings():
     return parse_config(get_config())
 
 
-def print_bindings(modes):
+def print_bindings(categories):
     '''Print an output of the bindings in i3'''
-    for mode in modes:
-        print("{}:".format(mode.name))
+    for category in categories:
+        print("{}:".format(category.name))
 
-        width = max(len(b.key) for b in mode.bindings())
+        width = max(len(b.key) for b in category.bindings())
 
-        for binding in mode.bindings():
+        for binding in category.bindings():
             print("\t{:<{width}}\t{}".format(binding.key, binding.command, width=width))
 
 
-def mode_label(mode):
-    'Create a GTK label for mode'''
+def category_label(category):
+    'Create a GTK label for category'''
     label = Gtk.Label()
-    if mode.pango:
-        label.set_markup(mode.name)
+    if category.pango:
+        label.set_markup(category.label)
     else:
-        label.set_text(mode.name)
+        label.set_text(category.label)
     return label
 
 
 class I3CheatWindow(Gtk.ApplicationWindow):
-    def __init__(self, modes, **kwargs):
+    def __init__(self, categories, **kwargs):
         '''Create an I3Cheat instance'''
         super().__init__(**kwargs)
 
@@ -180,8 +238,8 @@ class I3CheatWindow(Gtk.ApplicationWindow):
         self.set_default_size(-1, 740)
 
         accel_group = Gtk.AccelGroup()
-        accel_group.connect(Gdk.KEY_h, 0, 0, self.prev_mode)
-        accel_group.connect(Gdk.KEY_l, 0, 0, self.next_mode)
+        accel_group.connect(Gdk.KEY_h, 0, 0, self.prev_category)
+        accel_group.connect(Gdk.KEY_l, 0, 0, self.next_category)
         accel_group.connect(Gdk.KEY_q, 0, 0, self._quit)
         accel_group.connect(Gdk.KEY_Escape, 0, 0, self._quit)
         self.add_accel_group(accel_group)
@@ -189,8 +247,8 @@ class I3CheatWindow(Gtk.ApplicationWindow):
         self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
 
         self.notebook = Gtk.Notebook(scrollable=True)
-        for mode in modes:
-            self._init_mode(mode)
+        for category in categories:
+            self._init_category(category)
 
         self.add(self.notebook)
         self.current_page().grab_focus()
@@ -205,9 +263,9 @@ class I3CheatWindow(Gtk.ApplicationWindow):
     def current_page(self):
         return self.notebook.get_nth_page(self.notebook.get_current_page())
 
-    def _init_mode(self, mode):
+    def _init_category(self, category):
         store = Gtk.ListStore(str, str)
-        for binding in mode.bindings():
+        for binding in category.bindings():
             key = binding.key
             if binding.kind == 'code':
                 key = 'Code: ' + key
@@ -227,19 +285,19 @@ class I3CheatWindow(Gtk.ApplicationWindow):
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.add(tree)
 
-        self._tab_lookup[mode.name] = self.notebook.get_n_pages()
-        self.notebook.append_page(scrolled, mode_label(mode))
+        self._tab_lookup[category.name] = self.notebook.get_n_pages()
+        self.notebook.append_page(scrolled, category_label(category))
 
-    def focus_mode(self, mode):
-        'Focus on a mode by its name'
-        idx = self._tab_lookup.get(mode, 0)
+    def focus_category(self, category):
+        'Focus on a category by its name'
+        idx = self._tab_lookup.get(category, 0)
         self.notebook.set_current_page(idx)
 
-    def next_mode(self, *args):
-        'move focus to the next mode'
+    def next_category(self, *args):
+        'move focus to the next category'
         self.notebook.next_page()
 
-    def prev_mode(self, *args):
+    def prev_category(self, *args):
         self.notebook.prev_page()
 
     def _quit(self, *args):
@@ -263,24 +321,24 @@ class I3Cheat(Gtk.Application):
 
     def __init__(self):
         super().__init__(application_id="com.github.tmccombs.i3-cheat", flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
-        self.add_main_option('mode', ord('m'), 0, GLib.OptionArg.STRING, "Mode tab to open", "MODE")
+        self.add_main_option('category', ord('c'), 0, GLib.OptionArg.STRING, "Category or mode tab to open", "CATEGORY")
         self._window = None
 
     def do_command_line(self, cl):
         if not self._window:
-            self._window = I3CheatWindow(self.modes, application=self, title="I3 Cheatsheet")
+            self._window = I3CheatWindow(self.categories, application=self, title="I3 Cheatsheet")
             self._window.show_all()
 
-        mode = cl.get_options_dict().lookup_value('mode')
-        if mode:
-            mode = mode.get_string()
-            self._window.focus_mode(mode)
+        category = cl.get_options_dict().lookup_value('category')
+        if category:
+            category = category.get_string()
+            self._window.focus_category(category)
         self._window.present()
         return 0
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
-        self.modes = get_bindings()
+        self.categories = get_bindings()
 
 
 if __name__ == '__main__':
