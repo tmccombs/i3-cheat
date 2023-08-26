@@ -5,15 +5,15 @@ import os
 import re
 import socket
 import struct
+import subprocess
 from collections import namedtuple
 from pathlib import Path
-import subprocess
 
 import gi
+
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
 from gi.repository import Gdk, Gio, GLib, Gtk
-
 
 Binding = namedtuple('Binding', ['key', 'command', 'kind', 'release_key'])
 
@@ -198,6 +198,7 @@ def parse_config(config):
                     'mode',
                     match.group(1))
             categories.append(category)
+            in_mode = True
         elif in_mode and mode_end_re.match(line):
             category = default_category
     return categories
@@ -342,8 +343,8 @@ class I3Cheat(Gtk.Application):
 
 
 if __name__ == '__main__':
-    import sys
     import signal
+    import sys
     app = I3Cheat()
     # so ctrl+c still works
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, app.quit)
